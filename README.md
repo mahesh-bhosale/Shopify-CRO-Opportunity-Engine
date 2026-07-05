@@ -1,168 +1,305 @@
 # Shopify CRO Opportunity Engine
 
-A monorepo application for analyzing Shopify stores and identifying Conversion Rate Optimization (CRO) opportunities using AI-powered analysis.
+> AI-powered Conversion Rate Optimization audit tool for Shopify stores. Scrapes real store data, identifies conversion friction, and outputs a prioritized, scored CRO roadmap with experiment briefs.
+
+[![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)](https://python.org)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.111-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
+[![Next.js](https://img.shields.io/badge/Next.js-14-000000?logo=next.js&logoColor=white)](https://nextjs.org)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.4-3178C6?logo=typescript&logoColor=white)](https://typescriptlang.org)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+---
+
+## Features
+
+- **Automated Store Scraping** — Crawls homepage, collection templates, PDPs, and cart pages to harvest real structure and layout evidence
+- **AI-Powered CRO Analysis** — Uses Google Gemini to identify conversion opportunities with evidence-cited recommendations
+- **Local Fallback Engine** — Rule-based diagnostic mode when Gemini API is unavailable; generates real recommendations from parsed HTML signals
+- **ICE Priority Scoring** — Every opportunity scored by Impact, Confidence, and Effort using a mathematical formula
+- **Analytics Dashboard** — Interactive Recharts visualizations: CRO Health Score, Impact/Effort scatter matrix, category breakdowns, priority charts
+- **Competitor Benchmarking** — Optional competitor URL comparison with gap analysis
+- **Experiment Briefs** — A/B test experiment briefs for each identified opportunity
+- **Export Support** — Download audit reports as PDF, CSV, or JSON
+- **Responsive Design** — Mobile-optimized dashboard with dark-mode landing page
+
+---
 
 ## Architecture
 
-This is a monorepo with two main applications:
+```mermaid
+graph LR
+    A[Browser - Next.js 14] -->|POST /api/audit| B[FastAPI Backend]
+    B --> C[Scraper Service]
+    C -->|HTML| D[Parser Service]
+    D -->|Signals| E{Gemini API Key Valid?}
+    E -->|Yes| F[Gemini AI Service]
+    E -->|No| G[Local Fallback Engine]
+    F --> H[ICE Scorer]
+    G --> H
+    H --> I[AuditResponse]
+    I -->|JSON| A
+```
 
-- **Backend**: FastAPI-based Python service for scraping, parsing, and analyzing Shopify stores
-- **Frontend**: Next.js 14 application with TypeScript and Tailwind CSS for the user interface
+---
 
 ## Project Structure
 
 ```
 Shopify-CRO-Opportunity-Engine/
-  backend/
-    app/
-      main.py              # FastAPI application entry point
-      config.py            # Configuration using pydantic-settings
-      models.py            # Pydantic models for request/response
-      routers/
-        audit.py           # Audit endpoints
-        experiment.py      # Experiment brief endpoints (stub)
-      services/
-        scraper.py         # Web scraping service
-        parser.py          # HTML parsing service
-        gemini.py          # Google Gemini AI integration
-        scorer.py          # Opportunity scoring algorithm
-      utils/
-        helpers.py         # Utility functions
-    requirements.txt       # Python dependencies
-    .env.example          # Environment variables template
-
-  frontend/
-    app/
-      page.tsx             # Landing page
-      results/
-        page.tsx           # Results display page
-      components/
-        UrlForm.tsx        # URL input form
-        ResultsTable.tsx   # Results table component
-        OpportunityCard.tsx # Individual opportunity card
-        LoadingState.tsx   # Loading animation
-        ScoreBadge.tsx     # Score display badge
-        ExperimentBrief.tsx # Experiment brief component (stub)
-    lib/
-      api.ts              # API client functions
-      types.ts            # TypeScript type definitions
-    package.json          # Node.js dependencies
-    .env.local.example    # Frontend environment variables
-
-  README.md
-  .gitignore
+├── backend/
+│   ├── app/
+│   │   ├── main.py                 # FastAPI app with CORS, logging
+│   │   ├── config.py               # Pydantic Settings (env vars)
+│   │   ├── models.py               # Request/Response Pydantic models
+│   │   ├── routers/
+│   │   │   ├── audit.py            # POST /api/audit — full pipeline
+│   │   │   └── experiment.py       # GET /api/experiment/brief/:id
+│   │   ├── services/
+│   │   │   ├── scraper.py          # ScraperService — page fetching
+│   │   │   ├── parser.py           # 30+ CRO signal extractors
+│   │   │   ├── gemini.py           # Gemini AI integration
+│   │   │   └── scorer.py           # ICE score calculation
+│   │   └── utils/
+│   │       └── helpers.py          # URL validation utilities
+│   ├── tests/                      # Pytest test suite
+│   ├── requirements.txt
+│   └── .env.example
+│
+├── frontend/
+│   ├── app/
+│   │   ├── layout.tsx              # Root layout with Inter font, SEO
+│   │   ├── page.tsx                # SaaS landing page
+│   │   ├── globals.css             # Base styles, animations, print CSS
+│   │   ├── results/
+│   │   │   └── page.tsx            # Analytics dashboard
+│   │   └── components/
+│   │       ├── DashboardCharts.tsx  # 6 Recharts chart components
+│   │       ├── ExportButtons.tsx   # PDF/CSV/JSON export
+│   │       ├── ResultsTable.tsx    # Sortable, paginated data table
+│   │       ├── OpportunityCard.tsx # Detailed opportunity cards
+│   │       ├── ScoreBadge.tsx      # Circular SVG score badge
+│   │       ├── LoadingState.tsx    # Animated loading with progress
+│   │       ├── UrlForm.tsx         # URL input with validation
+│   │       └── ExperimentBrief.tsx # A/B test brief display
+│   ├── lib/
+│   │   ├── api.ts                  # Axios API client
+│   │   └── types.ts                # TypeScript interfaces
+│   ├── package.json
+│   └── .env.local.example
+│
+├── TESTING.md                      # Manual testing checklist
+├── render.yaml                     # Render deployment config
+├── README.md
+└── .gitignore
 ```
 
-## Backend Setup
+---
 
-1. Navigate to the backend directory:
+## Installation
+
+### Prerequisites
+
+- Python 3.10+
+- Node.js 18+
+- npm 9+
+
+### Backend Setup
+
 ```bash
 cd backend
-```
 
-2. Create and activate a virtual environment:
-```bash
-# On macOS/Linux:
-python -m venv venv
-source venv/bin/activate
+# Create and activate virtual environment
+# macOS/Linux:
+python -m venv venv && source venv/bin/activate
+# Windows (PowerShell):
+python -m venv venv; .\venv\Scripts\Activate.ps1
+# Windows (CMD):
+python -m venv venv && .\venv\Scripts\activate.bat
 
-# On Windows (PowerShell):
-python -m venv venv
-.\venv\Scripts\Activate.ps1
-
-# On Windows (CMD):
-python -m venv venv
-.\venv\Scripts\activate.bat
-```
-
-3. Install dependencies:
-```bash
+# Install dependencies
 pip install -r requirements.txt
-```
 
-4. Create a `.env` file based on `.env.example`:
-```bash
-# On macOS/Linux:
+# Create environment file
+# macOS/Linux:
 cp .env.example .env
-
-# On Windows (PowerShell):
+# Windows:
 Copy-Item .env.example .env
 
-# On Windows (CMD):
-copy .env.example .env
+# Edit .env and add your Gemini API key (optional — app works without it)
 ```
 
-5. Add your Google Gemini API key to `.env`:
-```
-GEMINI_API_KEY=your_actual_api_key_here
-```
+### Frontend Setup
 
-6. Run the backend server:
 ```bash
+cd frontend
+
+# Install dependencies
+npm install
+
+# Create environment file
+# macOS/Linux:
+cp .env.local.example .env.local
+# Windows:
+Copy-Item .env.local.example .env.local
+```
+
+---
+
+## Environment Variables
+
+### Backend (`backend/.env`)
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `GEMINI_API_KEY` | No | `""` | Google AI Studio API key. Leave empty for local fallback mode. |
+| `GEMINI_MODEL` | No | `gemini-2.0-flash` | Gemini model name |
+| `MAX_PAGES_TO_SCRAPE` | No | `4` | Max pages to scrape per audit |
+| `CORS_ORIGINS` | No | `http://localhost:3000` | Comma-separated allowed origins |
+
+### Frontend (`frontend/.env.local`)
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `NEXT_PUBLIC_API_URL` | No | `http://localhost:8000` | Backend API base URL |
+
+---
+
+## Running the Project
+
+### Start Backend
+
+```bash
+cd backend
+# Activate your virtual environment first
 uvicorn app.main:app --reload --port 8000
 ```
 
-The backend will be available at `http://localhost:8000`
+The API will be available at `http://localhost:8000`
 
-## Frontend Setup
+### Start Frontend
 
-1. Navigate to the frontend directory:
 ```bash
 cd frontend
-```
-
-2. Install dependencies:
-```bash
-npm install
-```
-
-3. Create a `.env.local` file based on `.env.local.example`:
-```bash
-# On macOS/Linux:
-cp .env.local.example .env.local
-
-# On Windows (PowerShell):
-Copy-Item .env.local.example .env.local
-
-# On Windows (CMD):
-copy .env.local.example .env.local
-```
-
-4. Run the development server:
-```bash
 npm run dev
 ```
 
-The frontend will be available at `http://localhost:3000`
+The app will be available at `http://localhost:3000`
+
+---
 
 ## API Endpoints
 
 ### Health Check
-- `GET /api/health` - Returns `{"status": "ok"}`
 
-### Audit
-- `POST /api/audit` - Run a CRO audit on a Shopify store
-  - Request body: `{"url": "https://store.com", "competitor_url": "https://competitor.com"}`
-  - Returns: `AuditResponse` with opportunities and summary
-- `GET /api/audit/status` - Check if audit service is ready
+```
+GET /api/health
+Response: { "status": "ok" }
+```
 
-### Experiment
-- `GET /api/experiment/brief/{opportunity_id}` - Get experiment brief for an opportunity
+### Run Audit
 
-## Features
+```
+POST /api/audit
+Content-Type: application/json
 
-- **Automated Store Analysis**: Scrapes and analyzes Shopify store pages
-- **AI-Powered Insights**: Uses Google Gemini to identify CRO opportunities
-- **Prioritized Recommendations**: Opportunities scored by impact, confidence, and effort
-- **Experiment Briefs**: Suggested A/B test setups for each opportunity
-- **Competitor Comparison**: Optional competitor analysis (bonus feature)
+{
+  "url": "https://allbirds.com",
+  "competitor_url": "https://bombas.com"  // optional
+}
 
-## Development Notes
+Response: {
+  "store_url": "https://allbirds.com",
+  "scraped_pages": ["https://allbirds.com", ...],
+  "opportunities": [
+    {
+      "id": "a1b2c3d4",
+      "title": "Enable product filtering on Collection",
+      "category": "Collection",
+      "impact": "High",
+      "confidence": 0.85,
+      "effort": "Medium",
+      "score": 6.8,
+      "evidence": "has_filters: False on collection page",
+      "recommendation": "Enable Shopify Search & Discovery app filters...",
+      "page_url": "https://allbirds.com/collections/all"
+    }
+  ],
+  "summary": "...",
+  "generated_at": "2025-01-15T10:30:00"
+}
+```
 
-- The backend currently returns dummy data in the audit endpoint. Integration with actual scraping and Gemini services is implemented but requires proper API keys and testing.
-- The experiment router is a stub and can be expanded with full A/B test management features.
-- Frontend uses Next.js 14 App Router with TypeScript for type safety.
-- Tailwind CSS is used for styling with a modern, clean UI.
+### Audit Status
+
+```
+GET /api/audit/status
+Response: { "ready": true }
+```
+
+### Experiment Brief
+
+```
+GET /api/experiment/brief/{opportunity_id}
+
+Response: {
+  "opportunity_id": "a1b2c3d4",
+  "hypothesis": "If we add product reviews...",
+  "control": "Current product page without reviews",
+  "variant": "Product page with customer reviews and ratings",
+  "primary_metric": "Add-to-Cart Rate",
+  "secondary_metrics": ["Conversion Rate", "Time on Page", "Bounce Rate"],
+  "estimated_duration": "2-3 weeks at 1,000+ daily visitors"
+}
+```
+
+---
+
+## Screenshots
+
+> Screenshots can be added here after deployment. Run the app locally and capture the landing page, loading state, and full dashboard view.
+
+---
+
+## Deployment
+
+### Frontend — Vercel
+
+1. Push your repository to GitHub
+2. Import the project in [Vercel](https://vercel.com)
+3. Set the **Root Directory** to `frontend`
+4. Set the **Framework Preset** to `Next.js`
+5. Add environment variable: `NEXT_PUBLIC_API_URL` = your Render backend URL
+6. Deploy
+
+### Backend — Render
+
+1. Push your repository to GitHub
+2. Create a new **Web Service** on [Render](https://render.com)
+3. Set the **Root Directory** to `backend`
+4. Set the **Build Command** to `pip install -r requirements.txt`
+5. Set the **Start Command** to `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+6. Add environment variables:
+   - `GEMINI_API_KEY` = your API key
+   - `GEMINI_MODEL` = `gemini-2.0-flash`
+   - `CORS_ORIGINS` = your Vercel frontend URL
+7. Deploy
+
+A `render.yaml` is included for Infrastructure-as-Code deployment.
+
+---
+
+## Future Improvements
+
+- [ ] **Dynamic Experiment Briefs** — Generate contextual A/B test briefs using Gemini instead of static stubs
+- [ ] **Historical Audits** — Store audit history with database persistence (PostgreSQL)
+- [ ] **Webhook Notifications** — Slack/email alerts when audits complete
+- [ ] **Scheduled Re-audits** — Cron-based recurring store monitoring
+- [ ] **Lighthouse Integration** — Incorporate Core Web Vitals and performance scores
+- [ ] **User Authentication** — Multi-tenant support with auth (Clerk/NextAuth)
+- [ ] **Shopify Theme Detection** — Identify the active theme and provide theme-specific recommendations
+- [ ] **Revenue Impact Modeling** — Connect to Shopify Analytics API for real revenue lift estimates
+
+---
 
 ## License
 

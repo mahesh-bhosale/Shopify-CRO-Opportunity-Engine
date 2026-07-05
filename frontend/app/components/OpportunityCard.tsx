@@ -16,27 +16,27 @@ export default function OpportunityCard({ opportunity }: OpportunityCardProps) {
   const getImpactStyles = (impact: string) => {
     switch (impact.toLowerCase()) {
       case "high":
-        return "bg-rose-50 text-rose-700 border border-rose-100";
+        return "bg-rose-50 text-rose-750 border border-rose-100";
       case "medium":
-        return "bg-amber-50 text-amber-700 border border-amber-100";
+        return "bg-amber-50 text-amber-750 border border-amber-105";
       default:
-        return "bg-sky-50 text-sky-700 border border-sky-100";
+        return "bg-sky-50 text-sky-750 border border-sky-100";
     }
   };
 
   const getEffortStyles = (effort: string) => {
     switch (effort.toLowerCase()) {
       case "low":
-        return "bg-emerald-50 text-emerald-700 border border-emerald-100";
+        return "bg-emerald-50 text-emerald-755 border border-emerald-100";
       case "medium":
-        return "bg-amber-50 text-amber-700 border border-amber-100";
+        return "bg-amber-50 text-amber-755 border border-amber-105";
       default:
-        return "bg-rose-50 text-rose-700 border border-rose-100";
+        return "bg-rose-50 text-rose-755 border border-rose-100";
     }
   };
 
   return (
-    <div className="bg-white rounded-xl border border-slate-100 p-6 hover:shadow-md hover:border-indigo-100/80 transition duration-200">
+    <div className="bg-white rounded-xl border border-slate-100 p-6 hover:shadow-lg hover:-translate-y-0.5 hover:border-indigo-100/90 transition-all duration-300">
       <div className="flex flex-col md:flex-row md:items-start justify-between gap-6 mb-5">
         <div className="flex-1 space-y-3">
           {/* Metadata badges */}
