@@ -57,12 +57,14 @@ Shopify-CRO-Opportunity-Engine/
 │   │   ├── services/
 │   │   │   ├── scraper.py          # ScraperService — page fetching
 │   │   │   ├── parser.py           # 30+ CRO signal extractors
-│   │   │   ├── gemini.py           # Gemini AI integration
+│   │   │   ├── gemini.py           # Gemini AI integration service
+│   │   │   ├── gemini_client.py    # Reusable google-genai Client
 │   │   │   └── scorer.py           # ICE score calculation
 │   │   └── utils/
 │   │       └── helpers.py          # URL validation utilities
 │   ├── tests/                      # Pytest test suite
 │   ├── requirements.txt
+│   ├── test_gemini.py              # Standalone API connection tester
 │   └── .env.example
 │
 ├── frontend/
@@ -152,7 +154,7 @@ Copy-Item .env.local.example .env.local
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `GEMINI_API_KEY` | No | `""` | Google AI Studio API key. Leave empty for local fallback mode. |
-| `GEMINI_MODEL` | No | `gemini-2.0-flash` | Gemini model name |
+| `GEMINI_MODEL` | No | `gemini-2.5-flash` | Gemini model name |
 | `MAX_PAGES_TO_SCRAPE` | No | `4` | Max pages to scrape per audit |
 | `CORS_ORIGINS` | No | `http://localhost:3000` | Comma-separated allowed origins |
 
@@ -239,6 +241,27 @@ GET /api/audit/status
 Response: { "ready": true }
 ```
 
+### Gemini Connection Test
+
+Tests connectivity to the Google Gemini model.
+
+```
+GET /api/gemini/test
+
+Response (Success):
+{
+  "connected": true,
+  "model": "gemini-2.5-flash",
+  "response": "GEMINI_CONNECTION_OK"
+}
+
+Response (Failure):
+{
+  "connected": false,
+  "error": "Gemini authentication failed..."
+}
+```
+
 ### Experiment Brief
 
 ```
@@ -295,7 +318,7 @@ Response: {
 5. Set the **Start Command** to `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
 6. Add environment variables:
    - `GEMINI_API_KEY` = your API key
-   - `GEMINI_MODEL` = `gemini-2.0-flash`
+   - `GEMINI_MODEL` = `gemini-2.5-flash`
    - `CORS_ORIGINS` = your Vercel frontend URL
 7. Deploy
 
