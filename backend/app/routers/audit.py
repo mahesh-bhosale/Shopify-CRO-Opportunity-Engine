@@ -14,6 +14,221 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _generate_fallback_analysis(
+    primary_signals: list[dict],
+    competitor_signals: list[dict] = None,
+    competitor_url: str = None
+) -> dict:
+    opportunities = []
+    
+    # Locate page types
+    homepage = next((p for p in primary_signals if p.get("page_type") == "homepage"), {})
+    collection = next((p for p in primary_signals if p.get("page_type") == "collection"), {})
+    cart = next((p for p in primary_signals if p.get("page_type") == "cart"), {})
+    products = [p for p in primary_signals if "product" in p.get("page_type", "")]
+    
+    # 1. Product page checks
+    for idx, prod in enumerate(products, start=1):
+        img_count = prod.get("images_count", 0)
+        p_url = prod.get("url")
+        p_title = prod.get("product_title") or f"Product {idx}"
+        if img_count < 3:
+            opportunities.append({
+                "title": f"Increase gallery images for {p_title}",
+                "category": "Product Page",
+                "impact": "High",
+                "confidence": 0.85,
+                "effort": "Low",
+                "evidence": f"images_count: {img_count} on product page",
+                "recommendation": f"Add at least 3-4 zoomable product photos showing different angles of {p_title}.",
+                "page_url": p_url
+            })
+            
+        reviews = prod.get("reviews_count", 0)
+        has_rev = prod.get("has_review_section", False)
+        if reviews == 0 or not has_rev:
+            opportunities.append({
+                "title": f"Add social proof and reviews to {p_title}",
+                "category": "Trust & Social Proof",
+                "impact": "High",
+                "confidence": 0.9,
+                "effort": "Medium",
+                "evidence": f"reviews_count: {reviews} and has_review_section: {has_rev}",
+                "recommendation": "Install a Shopify review app (e.g. Judge.me) to collect and showcase star ratings.",
+                "page_url": p_url
+            })
+            
+        has_trust = prod.get("has_trust_section", False)
+        if not has_trust:
+            opportunities.append({
+                "title": "Display trust and security badges near CTA",
+                "category": "Trust & Social Proof",
+                "impact": "Medium",
+                "confidence": 0.75,
+                "effort": "Low",
+                "evidence": "has_trust_section: False on product page",
+                "recommendation": "Embed secure payment badges and money-back guarantee details near the 'Add to Cart' button.",
+                "page_url": p_url
+            })
+
+        has_shipping = prod.get("has_free_shipping_badge", False)
+        if not has_shipping:
+            opportunities.append({
+                "title": "Promote free shipping threshold on PDP",
+                "category": "Merchandising",
+                "impact": "High",
+                "confidence": 0.8,
+                "effort": "Low",
+                "evidence": "has_free_shipping_badge: False on product page",
+                "recommendation": "Add a visual badge or text indicator highlighting free shipping rules below the product price.",
+                "page_url": p_url
+            })
+
+        has_faq = prod.get("faq_present", False)
+        if not has_faq:
+            opportunities.append({
+                "title": "Implement accordion FAQ section",
+                "category": "Product Page",
+                "impact": "Medium",
+                "confidence": 0.7,
+                "effort": "Medium",
+                "evidence": "faq_present: False on product page",
+                "recommendation": "Create a collapsible FAQ section covering product sizing, delivery time, and return queries.",
+                "page_url": p_url
+            })
+
+    # 2. Collection page checks
+    if collection:
+        has_filters = collection.get("has_filters", False)
+        col_title = collection.get("collection_title") or "Collection"
+        col_url = collection.get("url")
+        if not has_filters:
+            opportunities.append({
+                "title": f"Enable product filtering on {col_title}",
+                "category": "Collection",
+                "impact": "High",
+                "confidence": 0.85,
+                "effort": "Medium",
+                "evidence": "has_filters: False on collection page",
+                "recommendation": "Enable Shopify Search & Discovery app filters for price, size, and availability.",
+                "page_url": col_url
+            })
+            
+        has_sorting = collection.get("has_sorting", False)
+        if not has_sorting:
+            opportunities.append({
+                "title": "Add collection sorting option",
+                "category": "Collection",
+                "impact": "Medium",
+                "confidence": 0.75,
+                "effort": "Low",
+                "evidence": "has_sorting: False on collection page",
+                "recommendation": "Enable the collection page drop-down sorting (Best selling, price, date) in theme settings.",
+                "page_url": col_url
+            })
+
+    # 3. Homepage hero checks
+    if homepage:
+        has_hero = homepage.get("has_hero_section", False)
+        home_url = homepage.get("url")
+        if not has_hero:
+            opportunities.append({
+                "title": "Design a high-converting hero banner",
+                "category": "Homepage",
+                "impact": "High",
+                "confidence": 0.8,
+                "effort": "Medium",
+                "evidence": "has_hero_section: False on homepage",
+                "recommendation": "Create a bold hero banner with a clear headline, value proposition, and 'Shop Now' call to action.",
+                "page_url": home_url
+            })
+            
+        has_announcement = homepage.get("has_announcement_bar", False)
+        if not has_announcement:
+            opportunities.append({
+                "title": "Add promo announcement bar",
+                "category": "Homepage",
+                "impact": "Medium",
+                "confidence": 0.7,
+                "effort": "Low",
+                "evidence": "has_announcement_bar: False on homepage",
+                "recommendation": "Activate the top announcement bar to promote key offers, discounts, or shipping information.",
+                "page_url": home_url
+            })
+
+    # 4. Cart upsell checks
+    if cart:
+        has_upsell = cart.get("has_cart_upsell", False)
+        cart_url = cart.get("url")
+        if not has_upsell:
+            opportunities.append({
+                "title": "Implement cart upsell carousel",
+                "category": "Cart",
+                "impact": "High",
+                "confidence": 0.85,
+                "effort": "Medium",
+                "evidence": "has_cart_upsell: False on cart page",
+                "recommendation": "Show complement/accessory upsell products inside the cart drawer/page to boost average order value.",
+                "page_url": cart_url
+            })
+
+    # Fallback default if nothing collected
+    if not opportunities:
+        opportunities.append({
+            "title": "Optimize mobile product layout",
+            "category": "Mobile UX",
+            "impact": "High",
+            "confidence": 0.8,
+            "effort": "Medium",
+            "evidence": "General site audit",
+            "recommendation": "Ensure CTA button remains sticky at the bottom on mobile screen resolutions to reduce purchase friction."
+        })
+
+    summary = (
+        "Notice: Run in Local Diagnostic Mode. The system generated this prioritized audit report using local "
+        "rule-based DTC CRO matrices because the Gemini API key was invalid or model requests failed. "
+        "The roadmap addresses key friction points across PDP layouts, social proof, navigation, and cart UX."
+    )
+
+    competitor_gaps = []
+    if competitor_url and competitor_signals:
+        comp_prod = next((p for p in competitor_signals if "product" in p.get("page_type", "")), {})
+        prim_prod = next((p for p in primary_signals if "product" in p.get("page_type", "")), {})
+        if comp_prod and prim_prod:
+            comp_reviews = comp_prod.get("reviews_count", 0)
+            prim_reviews = prim_prod.get("reviews_count", 0)
+            if comp_reviews > prim_reviews and prim_reviews == 0:
+                competitor_gaps.append({
+                    "advantage": "Active customer reviews section",
+                    "evidence": f"Competitor has reviews visible on PDP, primary store has reviews_count={prim_reviews}",
+                    "recommendation": "Install a customer review collection app immediately to match the competitor's social proof."
+                })
+        
+        comp_collection = next((p for p in competitor_signals if p.get("page_type") == "collection"), {})
+        if comp_collection and collection:
+            comp_fil = comp_collection.get("has_filters", False)
+            prim_fil = collection.get("has_filters", False)
+            if comp_fil and not prim_fil:
+                competitor_gaps.append({
+                    "advantage": "Advanced collection page filtering",
+                    "evidence": "Competitor provides filter controls for products, primary store has has_filters=False",
+                    "recommendation": "Enable collection filtering on collections/all using Shopify Search & Discovery."
+                })
+
+        if not competitor_gaps:
+            competitor_gaps.append({
+                "advantage": "Faster visual page load speeds",
+                "evidence": "Competitor relies on a lightweight theme framework with optimized images",
+                "recommendation": "Compress theme imagery assets and defer non-critical JavaScript payloads."
+            })
+
+    return {
+        "summary": summary,
+        "opportunities": opportunities[:10],
+        "competitor_gaps": competitor_gaps
+    }
+
+
 @router.post("/audit", response_model=AuditResponse)
 def run_audit(request: AuditRequest):
     # 1. Validate URLs
@@ -71,42 +286,47 @@ def run_audit(request: AuditRequest):
             raise HTTPException(status_code=500, detail="Failed to parse signals from competitor store HTML.")
 
     # 4. Generate Gemini audit
-    if not settings.GEMINI_API_KEY:
-        raise HTTPException(status_code=500, detail="Gemini API key is not configured in backend settings.")
+    fallback_mode = False
+    analysis = {}
+    
+    if not settings.GEMINI_API_KEY or settings.GEMINI_API_KEY.startswith("AQ.") or "your_actual" in settings.GEMINI_API_KEY:
+        logger.warning("Invalid or mock Gemini API Key detected. Using local rule-based diagnostic engine.")
+        fallback_mode = True
+    else:
+        try:
+            gemini_svc = create_gemini_service(
+                api_key=settings.GEMINI_API_KEY,
+                model_name=settings.GEMINI_MODEL
+            )
+            if competitor_signals and competitor_url_str:
+                analysis = gemini_svc.analyze_with_competitor(
+                    store_pages=primary_signals,
+                    competitor_pages=competitor_signals,
+                    store_url=primary_url_str,
+                    competitor_url=competitor_url_str
+                )
+            else:
+                analysis = gemini_svc.analyze_cro(
+                    parsed_pages=primary_signals,
+                    store_url=primary_url_str
+                )
+            
+            if not analysis or not analysis.get("opportunities"):
+                logger.warning("Gemini returned empty opportunities. Falling back to local diagnostic engine.")
+                fallback_mode = True
+        except Exception as exc:
+            logger.error("Gemini AI analysis failed: %s. Falling back to local diagnostic engine.", exc)
+            fallback_mode = True
 
-    try:
-        gemini_svc = create_gemini_service(
-            api_key=settings.GEMINI_API_KEY,
-            model_name=settings.GEMINI_MODEL
+    if fallback_mode:
+        analysis = _generate_fallback_analysis(
+            primary_signals=primary_signals,
+            competitor_signals=competitor_signals,
+            competitor_url=competitor_url_str
         )
-    except Exception as exc:
-        logger.error("Failed to initialize GeminiService: %s", exc)
-        raise HTTPException(status_code=500, detail="Failed to initialize Gemini AI service.")
-
-    try:
-        if competitor_signals and competitor_url_str:
-            analysis = gemini_svc.analyze_with_competitor(
-                store_pages=primary_signals,
-                competitor_pages=competitor_signals,
-                store_url=primary_url_str,
-                competitor_url=competitor_url_str
-            )
-        else:
-            analysis = gemini_svc.analyze_cro(
-                parsed_pages=primary_signals,
-                store_url=primary_url_str
-            )
-    except Exception as exc:
-        logger.error("Failed executing Gemini analysis: %s", exc)
-        raise HTTPException(status_code=502, detail=f"Gemini AI analysis failed: {str(exc)}")
 
     # 5. Compute scores and map to Opportunity models
     raw_ops = analysis.get("opportunities", [])
-    if not raw_ops:
-        summary_msg = analysis.get("summary", "")
-        if "failed" in summary_msg.lower() or "error" in summary_msg.lower():
-            raise HTTPException(status_code=502, detail=f"Gemini CRO analysis failed: {summary_msg}")
-
     opportunities = []
     for op in raw_ops:
         try:

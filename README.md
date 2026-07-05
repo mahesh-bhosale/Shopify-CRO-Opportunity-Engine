@@ -60,10 +60,19 @@ Shopify-CRO-Opportunity-Engine/
 cd backend
 ```
 
-2. Create a virtual environment:
+2. Create and activate a virtual environment:
 ```bash
+# On macOS/Linux:
 python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+source venv/bin/activate
+
+# On Windows (PowerShell):
+python -m venv venv
+.\venv\Scripts\Activate.ps1
+
+# On Windows (CMD):
+python -m venv venv
+.\venv\Scripts\activate.bat
 ```
 
 3. Install dependencies:
@@ -73,7 +82,14 @@ pip install -r requirements.txt
 
 4. Create a `.env` file based on `.env.example`:
 ```bash
+# On macOS/Linux:
 cp .env.example .env
+
+# On Windows (PowerShell):
+Copy-Item .env.example .env
+
+# On Windows (CMD):
+copy .env.example .env
 ```
 
 5. Add your Google Gemini API key to `.env`:
@@ -102,7 +118,14 @@ npm install
 
 3. Create a `.env.local` file based on `.env.local.example`:
 ```bash
+# On macOS/Linux:
 cp .env.local.example .env.local
+
+# On Windows (PowerShell):
+Copy-Item .env.local.example .env.local
+
+# On Windows (CMD):
+copy .env.local.example .env.local
 ```
 
 4. Run the development server:
