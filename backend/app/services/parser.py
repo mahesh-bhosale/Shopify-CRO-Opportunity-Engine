@@ -1,480 +1,617 @@
-from bs4 import BeautifulSoup
-from typing import List, Optional, Dict, Any
-from pydantic import BaseModel, HttpUrl
-from urllib.parse import urljoin
+"""
+Parser service: takes raw HTML from the scraper and extracts 30+ structured
+CRO signals per page.  Every key is always present in the returned dict —
+missing data becomes None, [], 0, or False — so downstream code never has
+to guard against missing keys.
+
+Design rules
+------------
+1. Always try multiple selectors in sequence (most-specific first).
+2. Wrap every .get_text() / attribute access in a helper that catches
+   AttributeError — soup.select_one() can return None.
+3. Use re.search() on the full page text as a last-resort fallback for
+   signals that don't have consistent CSS classes across Shopify themes.
+4. Never raise — on any exception, log a warning and return the default.
+"""
+
+import logging
+import re
+from typing import Any
+
+from bs4 import BeautifulSoup, Tag
+
+logger = logging.getLogger(__name__)
 
 
-class HomepageData(BaseModel):
-    url: str
-    store_title: str
-    meta_description: str
-    hero_headline: Optional[str]
-    navigation_items: List[str]
-    announcement_bar: Optional[str]
-    trust_badges: List[str]
+# ---------------------------------------------------------------------------
+# Small helpers
+# ---------------------------------------------------------------------------
 
 
-class ProductPageData(BaseModel):
-    url: str
-    title: str
-    price: Optional[str]
-    compare_at_price: Optional[str]
-    images: List[str]
-    has_add_to_cart_button: bool
-    has_reviews: bool
-    shipping_information: Optional[str]
-    return_policy: Optional[str]
-    faqs: List[str]
-    stock_availability: Optional[str]
-    product_description: Optional[str]
+def _text(tag: Tag | None, default: str = "") -> str:
+    """Safe .get_text(strip=True) — returns default if tag is None."""
+    if tag is None:
+        return default
+    try:
+        return tag.get_text(strip=True)
+    except Exception:
+        return default
 
 
-class CollectionPageData(BaseModel):
-    url: str
-    collection_title: str
-    number_of_products: int
+def _attr(tag: Tag | None, attr: str, default: str = "") -> str:
+    """Safe tag[attr] access — returns default if tag or attribute is missing."""
+    if tag is None:
+        return default
+    try:
+        return tag.get(attr, default) or default
+    except Exception:
+        return default
 
 
-class CartPageData(BaseModel):
-    url: str
-    has_shipping_estimate: bool
-    payment_icons: List[str]
-    trust_badges: List[str]
-    has_checkout_button: bool
+def _first_text(soup: BeautifulSoup, *selectors: str) -> str | None:
+    """Try selectors in order; return stripped text of first match or None."""
+    for sel in selectors:
+        tag = soup.select_one(sel)
+        if tag:
+            t = _text(tag)
+            if t:
+                return t
+    return None
 
 
-class ParsedStore(BaseModel):
-    homepage: Optional[HomepageData]
-    product_pages: List[ProductPageData]
-    collection_pages: List[CollectionPageData]
-    cart_page: Optional[CartPageData]
-
-
-class Parser:
-    def __init__(self):
-        pass
-    
-    def parse_pages(self, pages: List[Dict[str, Any]]) -> ParsedStore:
-        homepage = None
-        product_pages = []
-        collection_pages = []
-        cart_page = None
-        
-        for page in pages:
-            url = page.get("url", "")
-            html = page.get("html", "")
-            
-            if not html:
-                continue
-            
-            soup = BeautifulSoup(html, 'lxml')
-            
-            if "/products/" in url:
-                product_data = self._parse_product_page(soup, url)
-                if product_data:
-                    product_pages.append(product_data)
-            elif "/collections/" in url:
-                collection_data = self._parse_collection_page(soup, url)
-                if collection_data:
-                    collection_pages.append(collection_data)
-            elif "/cart" in url or "/checkout" in url:
-                cart_data = self._parse_cart_page(soup, url)
-                if cart_data:
-                    cart_page = cart_data
-            else:
-                homepage_data = self._parse_homepage(soup, url)
-                if homepage_data:
-                    homepage = homepage_data
-        
-        return ParsedStore(
-            homepage=homepage,
-            product_pages=product_pages,
-            collection_pages=collection_pages,
-            cart_page=cart_page
-        )
-    
-    def _parse_homepage(self, soup: BeautifulSoup, url: str) -> Optional[HomepageData]:
-        store_title = self._extract_store_title(soup)
-        meta_description = self._extract_meta_description(soup)
-        hero_headline = self._extract_hero_headline(soup)
-        navigation_items = self._extract_navigation(soup)
-        announcement_bar = self._extract_announcement_bar(soup)
-        trust_badges = self._extract_trust_badges(soup)
-        
-        return HomepageData(
-            url=url,
-            store_title=store_title,
-            meta_description=meta_description,
-            hero_headline=hero_headline,
-            navigation_items=navigation_items,
-            announcement_bar=announcement_bar,
-            trust_badges=trust_badges
-        )
-    
-    def _parse_product_page(self, soup: BeautifulSoup, url: str) -> Optional[ProductPageData]:
-        title = self._extract_product_title(soup)
-        price = self._extract_price(soup)
-        compare_at_price = self._extract_compare_at_price(soup)
-        images = self._extract_product_images(soup, url)
-        has_add_to_cart_button = self._has_add_to_cart_button(soup)
-        has_reviews = self._has_product_reviews(soup)
-        shipping_information = self._extract_shipping_information(soup)
-        return_policy = self._extract_return_policy(soup)
-        faqs = self._extract_faqs(soup)
-        stock_availability = self._extract_stock_availability(soup)
-        product_description = self._extract_product_description(soup)
-        
-        return ProductPageData(
-            url=url,
-            title=title,
-            price=price,
-            compare_at_price=compare_at_price,
-            images=images,
-            has_add_to_cart_button=has_add_to_cart_button,
-            has_reviews=has_reviews,
-            shipping_information=shipping_information,
-            return_policy=return_policy,
-            faqs=faqs,
-            stock_availability=stock_availability,
-            product_description=product_description
-        )
-    
-    def _parse_collection_page(self, soup: BeautifulSoup, url: str) -> Optional[CollectionPageData]:
-        collection_title = self._extract_collection_title(soup)
-        number_of_products = self._count_products_in_collection(soup)
-        
-        return CollectionPageData(
-            url=url,
-            collection_title=collection_title,
-            number_of_products=number_of_products
-        )
-    
-    def _parse_cart_page(self, soup: BeautifulSoup, url: str) -> Optional[CartPageData]:
-        has_shipping_estimate = self._has_shipping_estimate(soup)
-        payment_icons = self._extract_payment_icons(soup)
-        trust_badges = self._extract_trust_badges(soup)
-        has_checkout_button = self._has_checkout_button(soup)
-        
-        return CartPageData(
-            url=url,
-            has_shipping_estimate=has_shipping_estimate,
-            payment_icons=payment_icons,
-            trust_badges=trust_badges,
-            has_checkout_button=has_checkout_button
-        )
-    
-    def _extract_store_title(self, soup: BeautifulSoup) -> str:
-        if soup.title:
-            return soup.title.string.strip() if soup.title.string else ""
-        
-        og_title = soup.find('meta', property='og:title')
-        if og_title and og_title.get('content'):
-            return og_title['content'].strip()
-        
-        h1 = soup.find('h1')
-        if h1:
-            return h1.get_text().strip()
-        
-        return ""
-    
-    def _extract_meta_description(self, soup: BeautifulSoup) -> str:
-        meta = soup.find('meta', attrs={'name': 'description'})
-        if meta and meta.get('content'):
-            return meta['content'].strip()
-        
-        og_desc = soup.find('meta', property='og:description')
-        if og_desc and og_desc.get('content'):
-            return og_desc['content'].strip()
-        
-        return ""
-    
-    def _extract_hero_headline(self, soup: BeautifulSoup) -> Optional[str]:
-        hero_selectors = [
-            '.hero h1',
-            '.hero-title',
-            '.banner h1',
-            '[class*="hero"] h1',
-            'h1.hero'
-        ]
-        
-        for selector in hero_selectors:
-            element = soup.select_one(selector)
-            if element:
-                return element.get_text().strip()
-        
-        return None
-    
-    def _extract_navigation(self, soup: BeautifulSoup) -> List[str]:
-        nav_items = []
-        
-        nav = soup.find('nav')
-        if nav:
-            links = nav.find_all('a', href=True)
-            nav_items = [link.get_text().strip() for link in links if link.get_text().strip()]
-        
-        return nav_items
-    
-    def _extract_announcement_bar(self, soup: BeautifulSoup) -> Optional[str]:
-        announcement_selectors = [
-            '.announcement-bar',
-            '[class*="announcement"]',
-            '.promo-bar',
-            '.top-bar'
-        ]
-        
-        for selector in announcement_selectors:
-            element = soup.select_one(selector)
-            if element:
-                return element.get_text().strip()
-        
-        return None
-    
-    def _extract_trust_badges(self, soup: BeautifulSoup) -> List[str]:
-        badges = []
-        
-        trust_keywords = ['secure', 'ssl', 'guarantee', 'verified', 'badge', 'trust', 'payment']
-        text = soup.get_text().lower()
-        
-        for keyword in trust_keywords:
-            if keyword in text:
-                badges.append(keyword)
-        
-        payment_icons = soup.find_all('img', alt=True)
-        for img in payment_icons:
-            alt = img['alt'].lower()
-            if any(payment in alt for payment in ['visa', 'mastercard', 'amex', 'paypal', 'stripe']):
-                badges.append(img['alt'])
-        
-        return badges
-    
-    def _extract_product_title(self, soup: BeautifulSoup) -> str:
-        selectors = [
-            'h1.product-title',
-            '.product-single h1',
-            '[class*="product"] h1',
-            'h1'
-        ]
-        
-        for selector in selectors:
-            element = soup.select_one(selector)
-            if element:
-                return element.get_text().strip()
-        
-        return ""
-    
-    def _extract_price(self, soup: BeautifulSoup) -> Optional[str]:
-        price_selectors = [
-            '.price',
-            '.product-price',
-            '[class*="price"]',
-            '.money'
-        ]
-        
-        for selector in price_selectors:
-            element = soup.select_one(selector)
-            if element:
-                text = element.get_text().strip()
-                if any(char.isdigit() for char in text):
-                    return text
-        
-        return None
-    
-    def _extract_compare_at_price(self, soup: BeautifulSoup) -> Optional[str]:
-        compare_selectors = [
-            '.compare-at-price',
-            '[class*="compare"]',
-            '.was-price',
-            '.original-price'
-        ]
-        
-        for selector in compare_selectors:
-            element = soup.select_one(selector)
-            if element:
-                text = element.get_text().strip()
-                if any(char.isdigit() for char in text):
-                    return text
-        
-        return None
-    
-    def _extract_product_images(self, soup: BeautifulSoup, base_url: str) -> List[str]:
-        images = []
-        
-        img_selectors = [
-            '.product-image img',
-            '.product-single img',
-            '[class*="product"] img',
-            'img[src*="product"]'
-        ]
-        
-        for selector in img_selectors:
-            for img in soup.select(selector):
-                src = img.get('src') or img.get('data-src')
-                if src:
-                    full_url = urljoin(base_url, src)
-                    if full_url not in images:
-                        images.append(full_url)
-        
-        return images[:10]
-    
-    def _has_add_to_cart_button(self, soup: BeautifulSoup) -> bool:
-        button_selectors = [
-            'button[type="submit"]',
-            '.add-to-cart',
-            '[class*="add"]',
-            'button:contains("Add")',
-            'button:contains("Cart")'
-        ]
-        
-        for selector in button_selectors:
-            elements = soup.select(selector)
-            for element in elements:
-                text = element.get_text().lower()
-                if 'add' in text or 'cart' in text or 'buy' in text:
-                    return True
-        
-        return False
-    
-    def _has_product_reviews(self, soup: BeautifulSoup) -> bool:
-        review_keywords = ['review', 'rating', 'star', 'testimonial', 'yotpo', 'judge.me']
-        text = soup.get_text().lower()
-        return any(keyword in text for keyword in review_keywords)
-    
-    def _extract_shipping_information(self, soup: BeautifulSoup) -> Optional[str]:
-        shipping_selectors = [
-            '.shipping-info',
-            '[class*="shipping"]',
-            '.delivery-info'
-        ]
-        
-        for selector in shipping_selectors:
-            element = soup.select_one(selector)
-            if element:
-                return element.get_text().strip()
-        
-        return None
-    
-    def _extract_return_policy(self, soup: BeautifulSoup) -> Optional[str]:
-        return_selectors = [
-            '.return-policy',
-            '[class*="return"]',
-            '.refund-policy'
-        ]
-        
-        for selector in return_selectors:
-            element = soup.select_one(selector)
-            if element:
-                return element.get_text().strip()
-        
-        return None
-    
-    def _extract_faqs(self, soup: BeautifulSoup) -> List[str]:
-        faqs = []
-        
-        faq_selectors = [
-            '.faq',
-            '[class*="faq"]',
-            '.accordion',
-            '.question'
-        ]
-        
-        for selector in faq_selectors:
-            elements = soup.select(selector)
-            for element in elements:
-                text = element.get_text().strip()
-                if text and len(text) > 10:
-                    faqs.append(text)
-        
-        return faqs[:5]
-    
-    def _extract_stock_availability(self, soup: BeautifulSoup) -> Optional[str]:
-        stock_selectors = [
-            '.stock',
-            '[class*="stock"]',
-            '.availability',
-            '.inventory'
-        ]
-        
-        for selector in stock_selectors:
-            element = soup.select_one(selector)
-            if element:
-                return element.get_text().strip()
-        
-        return None
-    
-    def _extract_product_description(self, soup: BeautifulSoup) -> Optional[str]:
-        desc_selectors = [
-            '.product-description',
-            '[class*="description"]',
-            '.product-details'
-        ]
-        
-        for selector in desc_selectors:
-            element = soup.select_one(selector)
-            if element:
-                return element.get_text().strip()[:500]
-        
-        return None
-    
-    def _extract_collection_title(self, soup: BeautifulSoup) -> str:
-        selectors = [
-            'h1.collection-title',
-            '.collection h1',
-            'h1'
-        ]
-        
-        for selector in selectors:
-            element = soup.select_one(selector)
-            if element:
-                return element.get_text().strip()
-        
-        return ""
-    
-    def _count_products_in_collection(self, soup: BeautifulSoup) -> int:
-        product_selectors = [
-            '.product-item',
-            '.product-card',
-            '[class*="product"]'
-        ]
-        
-        for selector in product_selectors:
-            elements = soup.select(selector)
-            if elements:
-                return len(elements)
-        
+def _count(soup: BeautifulSoup, selector: str) -> int:
+    """Count elements matching selector, catching all errors."""
+    try:
+        return len(soup.select(selector))
+    except Exception:
         return 0
-    
-    def _has_shipping_estimate(self, soup: BeautifulSoup) -> bool:
-        shipping_keywords = ['shipping', 'delivery', 'estimate', 'calculator']
-        text = soup.get_text().lower()
-        return any(keyword in text for keyword in shipping_keywords)
-    
-    def _extract_payment_icons(self, soup: BeautifulSoup) -> List[str]:
-        icons = []
-        
-        payment_keywords = ['visa', 'mastercard', 'amex', 'paypal', 'stripe', 'apple pay']
-        
-        for img in soup.find_all('img'):
-            alt = img.get('alt', '').lower()
-            src = img.get('src', '').lower()
-            
-            for keyword in payment_keywords:
-                if keyword in alt or keyword in src:
-                    icons.append(keyword)
-        
-        return list(set(icons))
-    
-    def _has_checkout_button(self, soup: BeautifulSoup) -> bool:
-        checkout_selectors = [
-            'button:contains("Checkout")',
-            'button:contains("checkout")',
-            '.checkout-button',
-            '[class*="checkout"]'
-        ]
-        
-        for selector in checkout_selectors:
-            elements = soup.select(selector)
-            if elements:
-                return True
-        
-        text = soup.get_text().lower()
-        return 'checkout' in text
+
+
+def _has_text(soup: BeautifulSoup, *patterns: str) -> bool:
+    """Return True if any pattern matches anywhere in the page text (case-insensitive)."""
+    full_text = soup.get_text(" ", strip=True)
+    for pat in patterns:
+        if re.search(pat, full_text, re.I):
+            return True
+    return False
+
+
+def _snippet(soup: BeautifulSoup, pattern: str, max_chars: int = 60) -> str | None:
+    """
+    Find the first occurrence of pattern in page text and return a short
+    surrounding snippet (up to max_chars characters).
+    """
+    full_text = soup.get_text(" ", strip=True)
+    m = re.search(rf".{{0,20}}{pattern}.{{0,{max_chars}}}", full_text, re.I)
+    return m.group(0).strip() if m else None
+
+
+# ---------------------------------------------------------------------------
+# Per-page-type parsers
+# ---------------------------------------------------------------------------
+
+
+def _parse_product(soup: BeautifulSoup, url: str) -> dict[str, Any]:
+    """Extract product-page CRO signals."""
+
+    # --- Title ---
+    product_title = _first_text(
+        soup,
+        "h1.product__title",
+        "h1.product-single__title",
+        "h1.product-title",
+        "[itemprop='name']",
+        "h1",
+    )
+
+    # --- Price ---
+    price_tag = (
+        soup.select_one("[itemprop='price']")
+        or soup.select_one(".price__regular .price-item--regular")
+        or soup.select_one(".product__price .price")
+        or soup.select_one(".product-single__price")
+        or soup.select_one(".price")
+    )
+    price = _text(price_tag) or None
+
+    # --- Compare-at / was price (strikethrough) ---
+    compare_tag = (
+        soup.select_one(".price__compare .price-item--regular")
+        or soup.select_one(".price--compare")
+        or soup.select_one("s.price")
+        or soup.select_one("[class*='compare']")
+        or soup.select_one("del")
+    )
+    compare_at_price = _text(compare_tag) or None
+
+    # --- Images ---
+    gallery_imgs = (
+        soup.select(".product__media img")
+        or soup.select(".product-single__photo img")
+        or soup.select(".product-images img")
+        or soup.select("img[src*='/products/']")
+    )
+    image_urls = [
+        _attr(img, "src") or _attr(img, "data-src")
+        for img in gallery_imgs
+        if (_attr(img, "src") or _attr(img, "data-src"))
+    ][:3]
+    images_count = len(gallery_imgs)
+
+    # --- Video ---
+    has_video = bool(
+        soup.select_one("video")
+        or soup.find("iframe", src=re.compile(r"youtube|vimeo", re.I))
+    )
+
+    # --- Reviews ---
+    # Try structured data first, then text patterns
+    review_count_tag = soup.select_one("[itemprop='reviewCount']")
+    reviews_count = 0
+    if review_count_tag:
+        try:
+            reviews_count = int(_text(review_count_tag).replace(",", ""))
+        except ValueError:
+            pass
+
+    if reviews_count == 0:
+        # Pattern: "1,234 reviews" or "47 ratings"
+        m = re.search(r"([\d,]+)\s+(?:review|rating)", soup.get_text(), re.I)
+        if m:
+            try:
+                reviews_count = int(m.group(1).replace(",", ""))
+            except ValueError:
+                pass
+
+    # --- Rating ---
+    rating_tag = soup.select_one("[itemprop='ratingValue']")
+    reviews_rating: str | None = _text(rating_tag) or None
+    if not reviews_rating:
+        m = re.search(r"(\d+\.?\d*)\s*(?:out of\s*5|/\s*5|\*)", soup.get_text(), re.I)
+        reviews_rating = m.group(1) if m else None
+
+    has_review_section = bool(
+        soup.select_one("[id*='review'], [class*='review'], [class*='spr']")
+    )
+
+    # --- CTA (Add to Cart) ---
+    cta_tag = (
+        soup.select_one("button[name='add']")
+        or soup.select_one("[type='submit'][name='add']")
+        or soup.find("button", string=re.compile(r"add to (cart|bag)|buy now", re.I))
+    )
+    # Fallback: any submit button inside a product form
+    if not cta_tag:
+        form = soup.select_one("form[action*='/cart/add']")
+        if form:
+            cta_tag = form.select_one("button[type='submit'], button")
+
+    cta_text = _text(cta_tag) or None
+    cta_present = cta_tag is not None
+
+    # --- Quantity selector ---
+    has_quantity_selector = bool(
+        soup.select_one("input[name='quantity']")
+        or soup.select_one("select[name='quantity']")
+        or soup.select_one("[class*='quantity']")
+    )
+
+    # --- Variant options (size, colour, etc.) ---
+    option_labels: list[str] = []
+    for fieldset in soup.select("fieldset"):
+        legend = fieldset.select_one("legend")
+        if legend:
+            option_labels.append(_text(legend))
+    if not option_labels:
+        for sel in soup.select("select[name*='option']"):
+            label = _attr(sel, "aria-label") or _attr(sel, "id")
+            if label:
+                option_labels.append(label)
+    size_color_options = option_labels
+
+    # --- Shipping info ---
+    shipping_info = _snippet(soup, r"free\s*shipping|shipping|delivery", max_chars=55)
+    has_free_shipping_badge = bool(
+        re.search(r"free\s*(shipping|delivery)", soup.get_text(), re.I)
+    )
+
+    # --- Return policy ---
+    return_policy = _snippet(soup, r"return|refund|exchange", max_chars=55)
+
+    # --- Trust badges ---
+    trust_keywords = re.compile(
+        r"secure|ssl|visa|mastercard|master card|paypal|amex|american express|"
+        r"guaranteed|money.back|norton|mcafee|shopify\s*secure",
+        re.I,
+    )
+    trust_badges: list[str] = []
+    for img in soup.select("img"):
+        alt = _attr(img, "alt")
+        if alt and trust_keywords.search(alt):
+            trust_badges.append(alt)
+    # Also look for SVG titles and spans with trust keywords in text
+    for el in soup.select("[class*='trust'], [class*='badge'], [class*='secure']"):
+        t = _text(el)
+        if t and trust_keywords.search(t):
+            trust_badges.append(t)
+    trust_badges = list(dict.fromkeys(trust_badges))  # deduplicate preserving order
+
+    has_trust_section = bool(
+        trust_badges
+        or soup.select_one("[class*='trust'], [id*='trust'], [class*='secure']")
+    )
+
+    # --- FAQ ---
+    faq_section = soup.select_one(
+        "[class*='faq'], [id*='faq'], [class*='accordion'], [id*='accordion'], "
+        "details, .collapsible"
+    )
+    faq_items = soup.select(
+        "[class*='faq'] li, [class*='accordion'] [class*='item'], details"
+    )
+    faq_present = faq_section is not None or bool(faq_items)
+    faq_items_count = len(faq_items)
+
+    # --- Description length ---
+    desc_tag = (
+        soup.select_one("[itemprop='description']")
+        or soup.select_one(".product__description")
+        or soup.select_one(".product-single__description")
+        or soup.select_one(".product-description")
+        or soup.select_one(".rte")
+    )
+    description_length = len(_text(desc_tag)) if desc_tag else 0
+
+    # --- Breadcrumbs ---
+    breadcrumbs = [
+        _text(a)
+        for a in soup.select(
+            "nav.breadcrumb a, [class*='breadcrumb'] a, [aria-label='breadcrumb'] a"
+        )
+        if _text(a)
+    ]
+
+    # --- Sticky ATC ---
+    sticky_atc = bool(
+        soup.select_one(
+            "[class*='sticky'][class*='cart'], [class*='sticky'][class*='add'], "
+            "[class*='sticky-atc'], [class*='fixed-atc']"
+        )
+    )
+
+    # --- Social proof / cross-sell ---
+    recently_viewed = _has_text(soup, r"recently viewed", r"you may also like")
+    cross_sell_section = (
+        soup.select_one("[class*='related'], [class*='upsell'], [class*='recommended']")
+    )
+    cross_sell_count = (
+        _count(cross_sell_section, "a[href*='/products/']")
+        if cross_sell_section
+        else 0
+    )
+
+    return {
+        "product_title": product_title,
+        "price": price,
+        "compare_at_price": compare_at_price,
+        "images_count": images_count,
+        "image_urls": image_urls,
+        "has_video": has_video,
+        "reviews_count": reviews_count,
+        "reviews_rating": reviews_rating,
+        "has_review_section": has_review_section,
+        "cta_text": cta_text,
+        "cta_present": cta_present,
+        "has_quantity_selector": has_quantity_selector,
+        "size_color_options": size_color_options,
+        "shipping_info": shipping_info,
+        "has_free_shipping_badge": has_free_shipping_badge,
+        "return_policy": return_policy,
+        "trust_badges": trust_badges,
+        "has_trust_section": has_trust_section,
+        "faq_present": faq_present,
+        "faq_items_count": faq_items_count,
+        "description_length": description_length,
+        "breadcrumbs": breadcrumbs,
+        "sticky_atc": sticky_atc,
+        "recently_viewed": recently_viewed,
+        "cross_sell_count": cross_sell_count,
+    }
+
+
+def _parse_collection(soup: BeautifulSoup, url: str) -> dict[str, Any]:
+    """Extract collection-page CRO signals."""
+
+    collection_title = _first_text(
+        soup,
+        "h1.collection__title",
+        "h1.collection-hero__title",
+        ".collection-header h1",
+        "h1",
+    )
+
+    # Product card count — Shopify themes use different class names
+    product_cards = (
+        soup.select(".product-card")
+        or soup.select("[data-product-card]")
+        or soup.select(".grid__item .card")
+        or soup.select("[class*='product-item']")
+        or soup.select("li.grid__item")
+    )
+    product_count_visible = len(product_cards)
+
+    has_filters = bool(
+        soup.select_one(
+            "[class*='filter'], [class*='facet'], "
+            "[id*='filter'], form[id*='filter']"
+        )
+    )
+
+    has_sorting = bool(
+        soup.select_one("select[id*='sort'], select[name*='sort'], [class*='sort']")
+        or _has_text(soup, r"sort by")
+    )
+
+    desc_tag = soup.select_one(
+        ".collection__description, .collection-hero__description, "
+        "[class*='collection-description']"
+    )
+    has_collection_description = desc_tag is not None
+    collection_description_length = len(_text(desc_tag)) if desc_tag else 0
+
+    # Count product cards that also have a visible price
+    products_with_prices_visible = 0
+    products_with_images = 0
+    for card in product_cards:
+        if card.select_one("[class*='price']"):
+            products_with_prices_visible += 1
+        if card.select_one("img"):
+            products_with_images += 1
+
+    return {
+        "collection_title": collection_title,
+        "product_count_visible": product_count_visible,
+        "has_filters": has_filters,
+        "has_sorting": has_sorting,
+        "has_collection_description": has_collection_description,
+        "collection_description_length": collection_description_length,
+        "products_with_prices_visible": products_with_prices_visible,
+        "products_with_images": products_with_images,
+    }
+
+
+def _parse_homepage(soup: BeautifulSoup, url: str) -> dict[str, Any]:
+    """Extract homepage CRO signals."""
+
+    has_announcement_bar = bool(
+        soup.select_one(
+            "[class*='announcement'], [class*='promo-bar'], "
+            "[class*='top-bar'], [class*='marquee']"
+        )
+    )
+    announcement_text: str | None = None
+    if has_announcement_bar:
+        bar = soup.select_one(
+            "[class*='announcement'], [class*='promo-bar'], [class*='top-bar']"
+        )
+        announcement_text = _text(bar)[:120] if bar else None
+
+    # Hero / banner section
+    hero = soup.select_one(
+        "[class*='hero'], [class*='banner'], [class*='slideshow'], "
+        "[class*='slider'], section:first-of-type"
+    )
+    has_hero_section = hero is not None
+    hero_headline: str | None = None
+    hero_cta_text: str | None = None
+    if hero:
+        h_tag = hero.select_one("h1, h2")
+        hero_headline = _text(h_tag) or None
+        cta = hero.select_one("a.btn, a.button, button, a[class*='cta']")
+        hero_cta_text = _text(cta) or None
+
+    # Count featured collection sections
+    featured_collection_count = len(
+        soup.select(
+            "[class*='featured-collection'], [class*='collection-list'], "
+            "section[class*='collection']"
+        )
+    )
+
+    return {
+        "has_hero_section": has_hero_section,
+        "hero_headline": hero_headline,
+        "hero_cta_text": hero_cta_text,
+        "featured_collection_count": featured_collection_count,
+        "has_announcement_bar": has_announcement_bar,
+        "announcement_text": announcement_text,
+    }
+
+
+def _parse_cart(soup: BeautifulSoup, url: str) -> dict[str, Any]:
+    """Extract cart-page CRO signals."""
+
+    page_text = soup.get_text(" ", strip=True)
+
+    cart_is_empty = bool(
+        re.search(r"your cart is empty|no items|cart is currently empty", page_text, re.I)
+    )
+    has_cart_upsell = bool(
+        re.search(
+            r"you might also like|add[- ]on|frequently bought|complete the look",
+            page_text,
+            re.I,
+        )
+    )
+    has_order_note = bool(
+        soup.select_one("textarea[name='note'], [class*='order-note'] textarea")
+    )
+    has_express_checkout = bool(
+        re.search(r"buy with|shop pay|express checkout|fast checkout", page_text, re.I)
+    )
+
+    return {
+        "cart_is_empty": cart_is_empty,
+        "has_cart_upsell": has_cart_upsell,
+        "has_order_note": has_order_note,
+        "has_express_checkout": has_express_checkout,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Null / default dicts  (so every page type always has all keys)
+# ---------------------------------------------------------------------------
+
+_PRODUCT_DEFAULTS: dict[str, Any] = {
+    "product_title": None,
+    "price": None,
+    "compare_at_price": None,
+    "images_count": 0,
+    "image_urls": [],
+    "has_video": False,
+    "reviews_count": 0,
+    "reviews_rating": None,
+    "has_review_section": False,
+    "cta_text": None,
+    "cta_present": False,
+    "has_quantity_selector": False,
+    "size_color_options": [],
+    "shipping_info": None,
+    "has_free_shipping_badge": False,
+    "return_policy": None,
+    "trust_badges": [],
+    "has_trust_section": False,
+    "faq_present": False,
+    "faq_items_count": 0,
+    "description_length": 0,
+    "breadcrumbs": [],
+    "sticky_atc": False,
+    "recently_viewed": False,
+    "cross_sell_count": 0,
+}
+
+_COLLECTION_DEFAULTS: dict[str, Any] = {
+    "collection_title": None,
+    "product_count_visible": 0,
+    "has_filters": False,
+    "has_sorting": False,
+    "has_collection_description": False,
+    "collection_description_length": 0,
+    "products_with_prices_visible": 0,
+    "products_with_images": 0,
+}
+
+_HOMEPAGE_DEFAULTS: dict[str, Any] = {
+    "has_hero_section": False,
+    "hero_headline": None,
+    "hero_cta_text": None,
+    "featured_collection_count": 0,
+    "has_announcement_bar": False,
+    "announcement_text": None,
+}
+
+_CART_DEFAULTS: dict[str, Any] = {
+    "cart_is_empty": False,
+    "has_cart_upsell": False,
+    "has_order_note": False,
+    "has_express_checkout": False,
+}
+
+
+# ---------------------------------------------------------------------------
+# Public entry points
+# ---------------------------------------------------------------------------
+
+
+def parse_page(html: str, page_type: str, url: str) -> dict[str, Any]:
+    """
+    Parse one page's HTML into a structured CRO signal dict.
+
+    The returned dict always contains:
+      - page_type  : the label passed in (e.g. "product_1", "homepage")
+      - url        : the page's URL
+      - page_title : <title> tag text
+      - h1         : first <h1> text
+      - Plus all page-type-specific keys (see defaults above)
+
+    All values are safe — no missing keys, no unhandled None access.
+    """
+    base: dict[str, Any] = {
+        "page_type": page_type,
+        "url": url,
+        "page_title": None,
+        "h1": None,
+    }
+
+    # Determine which type-specific defaults to start from
+    if "product" in page_type:
+        result = {**base, **_PRODUCT_DEFAULTS}
+    elif "collection" in page_type:
+        result = {**base, **_COLLECTION_DEFAULTS}
+    elif "homepage" in page_type or "home" in page_type:
+        result = {**base, **_HOMEPAGE_DEFAULTS}
+    elif "cart" in page_type:
+        result = {**base, **_CART_DEFAULTS}
+    else:
+        result = {**base}
+
+    if not html or not html.strip():
+        logger.warning("Empty HTML for page_type='%s', url='%s'", page_type, url)
+        return result
+
+    try:
+        soup = BeautifulSoup(html, "lxml")
+
+        # Universal fields
+        result["page_title"] = _first_text(soup, "title")
+        result["h1"] = _first_text(soup, "h1")
+
+        # Type-specific parsing
+        if "product" in page_type:
+            result.update(_parse_product(soup, url))
+        elif "collection" in page_type:
+            result.update(_parse_collection(soup, url))
+        elif "homepage" in page_type or "home" in page_type:
+            result.update(_parse_homepage(soup, url))
+        elif "cart" in page_type:
+            result.update(_parse_cart(soup, url))
+
+    except Exception as exc:
+        logger.warning(
+            "Unexpected error parsing page_type='%s' url='%s': %s",
+            page_type,
+            url,
+            exc,
+            exc_info=True,
+        )
+
+    return result
+
+
+def parse_all_pages(pages: dict[str, dict]) -> list[dict[str, Any]]:
+    """
+    Parse every page returned by the scraper.
+
+    Args:
+        pages: dict mapping label → {url, html, status_code}
+                as returned by ScraperService.scrape_all()
+
+    Returns:
+        List of parsed signal dicts, one per successfully fetched page.
+        Pages with non-200 status codes are included but flagged.
+    """
+    parsed: list[dict[str, Any]] = []
+
+    for label, page_data in pages.items():
+        url = page_data.get("url", "")
+        html = page_data.get("html", "")
+        status = page_data.get("status_code", 0)
+
+        logger.info("Parsing page [%s] %s (status=%s)", label, url, status)
+
+        signals = parse_page(html, label, url)
+        signals["http_status"] = status  # pass through for Gemini context
+        parsed.append(signals)
+
+    logger.info("Parsed %d pages total", len(parsed))
+    return parsed
