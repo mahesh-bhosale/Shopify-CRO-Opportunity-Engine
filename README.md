@@ -156,6 +156,9 @@ Copy-Item .env.local.example .env.local
 | `MAX_PAGES_TO_SCRAPE` | No | `4` | Max pages to scrape per audit |
 | `CORS_ORIGINS` | No | `http://localhost:3000` | Comma-separated allowed origins |
 
+> [!TIP]
+> **Gemini API Key**: The `GEMINI_API_KEY` is **optional**. If left empty (or configured with a placeholder key), the backend will automatically transition into **Local Diagnostic Fallback Mode**. In this mode, the engine evaluates the crawled and parsed HTML structure using rule-based algorithms to produce a prioritized audit. If a valid Gemini API key (starting with `AIzaSy`) is supplied, the backend will query Gemini AI to generate recommendations.
+
 ### Frontend (`frontend/.env.local`)
 
 | Variable | Required | Default | Description |
