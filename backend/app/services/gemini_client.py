@@ -83,10 +83,10 @@ def get_gemini_client() -> genai.Client:
         raise GeminiAuthError("Gemini API key is not configured in settings.")
 
     try:
-        # Default client timeout is set using types.HttpOptions
+        # Default client timeout is set using types.HttpOptions (expects milliseconds)
         _client_instance = genai.Client(
             api_key=api_key,
-            http_options=types.HttpOptions(timeout=60.0)
+            http_options=types.HttpOptions(timeout=60000)
         )
         return _client_instance
     except Exception as exc:
