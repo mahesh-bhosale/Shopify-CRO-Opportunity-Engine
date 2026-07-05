@@ -254,9 +254,21 @@ Response: {
 
 ---
 
-## Screenshots
+## Screenshots & Demos
 
-> Screenshots can be added here after deployment. Run the app locally and capture the landing page, loading state, and full dashboard view.
+### Landing Page
+![Landing Page](docs/landing%20page.png)
+
+### Diagnostics Dashboard
+![CRO Audit Result Page](docs/result%20page.png)
+
+### Live Demo Videos
+
+#### 📹 Live Store Audit (Allbirds)
+![Live Store Audit](docs/cro_dashboard_test.webp)
+
+#### 📹 Competitor Benchmarking Audit (Gymshark vs. Ruggable)
+![Competitor Audit](docs/competitor_audit_test.webp)
 
 ---
 
