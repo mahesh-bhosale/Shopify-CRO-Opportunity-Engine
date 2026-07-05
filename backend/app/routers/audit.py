@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse
 from app.models import AuditRequest, AuditResponse, Opportunity
 from app.utils.helpers import validate_url
 from app.services.scraper import scrape_store
@@ -289,8 +290,8 @@ def run_audit(request: AuditRequest):
     fallback_mode = False
     analysis = {}
     
-    if not settings.GEMINI_API_KEY or settings.GEMINI_API_KEY.startswith("AQ.") or "your_actual" in settings.GEMINI_API_KEY:
-        logger.warning("Invalid or mock Gemini API Key detected. Using local rule-based diagnostic engine.")
+    if not settings.GEMINI_API_KEY or "your_actual" in settings.GEMINI_API_KEY or settings.GEMINI_API_KEY == "your_gemini_api_key_here":
+        logger.warning("Mock Gemini API Key template detected. Using local rule-based diagnostic engine.")
         fallback_mode = True
     else:
         try:
@@ -388,4 +389,51 @@ def run_audit(request: AuditRequest):
 @router.get("/audit/status")
 def audit_status():
     return {"ready": True}
+
+
+@router.get("/gemini/test")
+def test_gemini():
+    """
+    Health check endpoint to test Gemini API connectivity.
+    """
+    logger.info("✓ Gemini request started")
+    api_key = settings.GEMINI_API_KEY
+    if not api_key or "your_actual" in api_key or api_key == "your_gemini_api_key_here":
+        logger.error("✗ Gemini request failed")
+        return JSONResponse(
+            status_code=400,
+            content={
+                "connected": False,
+                "error": "Gemini API key is not configured or is a placeholder."
+            }
+        )
+
+    try:
+        from app.services.gemini_client import get_gemini_client, map_exception
+        client = get_gemini_client()
+        
+        response = client.models.generate_content(
+            model=settings.GEMINI_MODEL,
+            contents="Reply with exactly: GEMINI_CONNECTION_OK"
+        )
+        text = response.text.strip()
+        logger.info("✓ Gemini response received")
+        return {
+            "connected": True,
+            "model": settings.GEMINI_MODEL,
+            "response": text
+        }
+    except Exception as exc:
+        logger.error("✗ Gemini request failed")
+        from app.services.gemini_client import map_exception
+        mapped_exc = map_exception(exc)
+        logger.error("Gemini test connection failed: %s", mapped_exc)
+        return JSONResponse(
+            status_code=500,
+            content={
+                "connected": False,
+                "error": str(mapped_exc)
+            }
+        )
+
 

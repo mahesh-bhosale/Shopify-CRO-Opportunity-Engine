@@ -1,24 +1,10 @@
-"""
-Gemini service: sends structured page signals to Gemini 1.5 Flash and
-returns a parsed list of CRO opportunities plus an overall summary.
-
-Design rules
-------------
-1. Temperature is kept low (0.3) for consistent, structured output.
-2. The prompt forbids generic advice — every recommendation must cite
-   a specific field value from the data.
-3. JSON is extracted with a two-pass approach:
-     Pass 1 — strip markdown fences, try json.loads()
-     Pass 2 — ask Gemini to "return only the raw JSON" and retry once
-4. On any failure we return a degraded response rather than raising.
-"""
-
 import json
 import logging
 import re
 from typing import Any
 
-import google.generativeai as genai
+from google.genai import types
+from app.services.gemini_client import get_gemini_client, map_exception, GeminiError
 
 logger = logging.getLogger(__name__)
 
@@ -128,23 +114,14 @@ def _extract_json(text: str) -> Any:
 
 class GeminiService:
     """
-    Wrapper around the google-generativeai SDK for CRO analysis.
+    Wrapper around the google-genai SDK for CRO analysis.
 
     The service is stateless — create one instance per request or reuse
     a single instance (the underlying SDK client is thread-safe).
     """
 
-    def __init__(self, api_key: str, model_name: str = "gemini-1.5-flash") -> None:
-        genai.configure(api_key=api_key)
-        self._generation_config = genai.GenerationConfig(
-            temperature=0.3,
-            max_output_tokens=4096,
-            # candidate_count defaults to 1 which is what we want
-        )
-        self._model = genai.GenerativeModel(
-            model_name=model_name,
-            generation_config=self._generation_config,
-        )
+    def __init__(self, api_key: str, model_name: str = "gemini-2.5-flash") -> None:
+        self._model_name = model_name
         logger.info("GeminiService initialised with model '%s'", model_name)
 
     # ------------------------------------------------------------------
@@ -168,7 +145,7 @@ class GeminiService:
         this method never raises.
         """
         prompt = self._build_cro_prompt(parsed_pages, store_url)
-        raw = self._call_gemini(prompt)
+        raw = self._call_gemini(prompt, system_instruction=CRO_SYSTEM_CONTEXT)
 
         if raw is None:
             return self._empty_result("Gemini call failed — please try again.")
@@ -212,7 +189,7 @@ class GeminiService:
         prompt = self._build_competitor_prompt(
             store_pages, competitor_pages, store_url, competitor_url
         )
-        raw = self._call_gemini(prompt)
+        raw = self._call_gemini(prompt, system_instruction=CRO_SYSTEM_CONTEXT + "\n\n" + COMPETITOR_EXTRA_CONTEXT)
 
         if raw is None:
             return {**self._empty_result("Gemini call failed."), "competitor_gaps": []}
@@ -268,7 +245,6 @@ class GeminiService:
     ) -> str:
         data_block = json.dumps(parsed_pages, indent=2)
         return (
-            f"{CRO_SYSTEM_CONTEXT}\n\n"
             f"Store URL: {store_url}\n\n"
             f"Extracted page data:\n{data_block}"
         )
@@ -281,8 +257,6 @@ class GeminiService:
         competitor_url: str,
     ) -> str:
         return (
-            f"{CRO_SYSTEM_CONTEXT}\n\n"
-            f"{COMPETITOR_EXTRA_CONTEXT}\n\n"
             f"PRIMARY STORE URL: {store_url}\n"
             f"PRIMARY STORE DATA:\n{json.dumps(store_pages, indent=2)}\n\n"
             f"COMPETITOR URL: {competitor_url}\n"
@@ -293,18 +267,32 @@ class GeminiService:
     # Gemini call + JSON parsing (with one retry)
     # ------------------------------------------------------------------
 
-    def _call_gemini(self, prompt: str) -> str | None:
+    def _call_gemini(self, prompt: str, system_instruction: str = None) -> str | None:
         """
         Send a prompt to Gemini and return the raw text response.
         Returns None on any exception.
         """
         try:
-            response = self._model.generate_content(prompt)
+            client = get_gemini_client()
+            logger.info("✓ Gemini request started")
+            config = types.GenerateContentConfig(
+                temperature=0.3,
+                max_output_tokens=4096,
+                system_instruction=system_instruction
+            )
+            response = client.models.generate_content(
+                model=self._model_name,
+                contents=prompt,
+                config=config
+            )
             text = response.text
+            logger.info("✓ Gemini response received")
             logger.debug("Gemini raw response length: %d chars", len(text))
             return text
         except Exception as exc:
-            logger.error("Gemini API call failed: %s", exc, exc_info=True)
+            logger.error("✗ Gemini request failed")
+            mapped_exc = map_exception(exc)
+            logger.error("Gemini API call failed: %s", mapped_exc, exc_info=True)
             return None
 
     def _parse_json(self, raw: str, original_prompt: str) -> Any:
@@ -352,6 +340,6 @@ class GeminiService:
 # ---------------------------------------------------------------------------
 
 
-def create_gemini_service(api_key: str, model_name: str = "gemini-1.5-flash") -> GeminiService:
+def create_gemini_service(api_key: str, model_name: str = "gemini-2.5-flash") -> GeminiService:
     """Convenience factory — keeps router code clean."""
     return GeminiService(api_key=api_key, model_name=model_name)
